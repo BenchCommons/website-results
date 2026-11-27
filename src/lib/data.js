@@ -13,3 +13,16 @@ export function loadRound(id) {
   if (!cache.has(id)) cache.set(id, json(`data/rounds/${id}.json`).catch((e) => { cache.delete(id); throw e; }));
   return cache.get(id);
 }
+
+/**
+ * Loads a round and reports the result only while the caller still wants it. The returned function cancels
+ * the request: a late answer or failure for a round that is no longer selected is ignored.
+ */
+export function followRound(id, load, onData, onError) {
+  let live = true;
+  load(id).then(
+    (r) => live && onData(r),
+    (e) => live && onError(e),
+  );
+  return () => { live = false; };
+}

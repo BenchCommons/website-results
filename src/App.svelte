@@ -1,6 +1,6 @@
 <script>
   import Nav from './components/Nav.svelte';
-  import { loadIndex, loadRound } from './lib/data.js';
+  import { followRound, loadIndex, loadRound } from './lib/data.js';
   import { decode, encode } from './lib/hash.js';
   import Environment from './sections/Environment.svelte';
   import Intro from './sections/Intro.svelte';
@@ -43,13 +43,19 @@
 
   $effect(() => {
     const id = ui?.round;
-    if (!id || round?.id === id) return;
-    loadRound(id)
-      .then((r) => {
+    if (!id) return;
+    // A failure belongs to the round that was selected when it happened.
+    error = null;
+    if (round?.id === id) return;
+    return followRound(
+      id,
+      loadRound,
+      (r) => {
         round = r;
         ui = decode(location.hash.includes('round=') ? location.hash : encode(ui, null), index, r);
-      })
-      .catch((e) => (error = e.message));
+      },
+      (e) => (error = e.message),
+    );
   });
 
   $effect(() => {

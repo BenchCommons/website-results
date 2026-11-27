@@ -34,3 +34,41 @@ test('an old link to a missing round falls back instead of showing a blank page'
   await expect(page.locator('main h1')).toContainText('Results, round');
   expect(await page.locator('.chart li').count()).toBeGreaterThan(0);
 });
+
+test('a late answer for a round that was switched away from does not replace the selected round', async ({ page }) => {
+  // 2026-10-06 answers only after the user has moved on to 2026-10-05.
+  let release;
+  const gate = new Promise((r) => (release = r));
+  await page.route('**/data/rounds/2026-10-06.json', async (route) => {
+    await gate;
+    await route.continue();
+  });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto('/#section=environment&round=2026-10-06');
+  await expect(page.getByText('Loading round 2026-10-06')).toBeVisible();
+  await page.evaluate(() => { location.hash = '#section=environment&round=2026-10-05'; });
+  await expect(page.locator('main h1')).toContainText('2026-10-05');
+  // Record every text the page shows from now on.
+  await page.evaluate(() => {
+    window.__seen = [];
+    new MutationObserver(() => window.__seen.push(document.querySelector('main')?.innerText ?? '')).observe(document.body, { subtree: true, childList: true, characterData: true });
+  });
+  release();
+  await page.waitForResponse('**/data/rounds/2026-10-06.json');
+  await page.waitForTimeout(300);
+  await expect(page.locator('main h1')).toContainText('2026-10-05');
+  await expect(page).toHaveURL(/round=2026-10-05/);
+  const seen = await page.evaluate(() => window.__seen);
+  expect(seen.filter((t) => t.includes('2026-10-06') || t.includes('Loading round'))).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('the error of a round that failed to load goes away when another round is selected', async ({ page }) => {
+  await page.route('**/data/rounds/2026-10-06.json', (route) => route.fulfill({ status: 500, body: 'boom' }));
+  await page.goto('/#section=environment&round=2026-10-06');
+  await expect(page.getByRole('alert')).toContainText('HTTP 500');
+  await page.evaluate(() => { location.hash = '#section=environment&round=2026-10-05'; });
+  await expect(page.locator('main h1')).toContainText('2026-10-05');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
