@@ -43,7 +43,10 @@
 
   $effect(() => {
     const id = ui?.round;
-    if (!id || round?.id === id) return;
+    if (!id) return;
+    // A failure belongs to the round that was selected when it happened.
+    error = null;
+    if (round?.id === id) return;
     return followRound(
       id,
       loadRound,

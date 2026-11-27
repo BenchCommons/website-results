@@ -63,3 +63,12 @@ test('a late answer for a round that was switched away from does not replace the
   expect(seen.filter((t) => t.includes('2026-10-06') || t.includes('Loading round'))).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test('the error of a round that failed to load goes away when another round is selected', async ({ page }) => {
+  await page.route('**/data/rounds/2026-10-06.json', (route) => route.fulfill({ status: 500, body: 'boom' }));
+  await page.goto('/#section=environment&round=2026-10-06');
+  await expect(page.getByRole('alert')).toContainText('HTTP 500');
+  await page.evaluate(() => { location.hash = '#section=environment&round=2026-10-05'; });
+  await expect(page.locator('main h1')).toContainText('2026-10-05');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
