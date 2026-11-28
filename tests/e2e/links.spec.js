@@ -72,3 +72,94 @@ test('the error of a round that failed to load goes away when another round is s
   await expect(page.locator('main h1')).toContainText('2026-10-05');
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
+
+// Round ids come from the published index, so the tests do not depend on which rounds the data submodules pin.
+async function roundIds(request) {
+  const index = await (await request.get('/data/rounds.json')).json();
+  expect(index.rounds.length).toBeGreaterThan(1);
+  return index.rounds.map((r) => r.id);
+}
+
+test('after a round fails to load the navigation stays and another round can be selected', async ({ page, request }) => {
+  const [bad, good] = await roundIds(request);
+  await page.route(`**/data/rounds/${bad}.json`, (route) => route.fulfill({ status: 500, body: 'boom' }));
+  await page.goto(`/#section=results&round=${good}`);
+  await expect(page.locator('main h1')).toContainText(good);
+  await page.evaluate((id) => { location.hash = `#section=results&round=${id}`; }, bad);
+  await expect(page.getByRole('alert')).toContainText('HTTP 500');
+  await expect(page.getByRole('alert')).toContainText(bad);
+  // The loaded round is never shown as the selected one.
+  await expect(page.locator('main h1')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+  await page.getByLabel('Round').selectOption(good);
+  await expect(page.locator('main h1')).toContainText(good);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('Retry fetches the failed round again and recovers the results', async ({ page, request }) => {
+  const [bad] = await roundIds(request);
+  let calls = 0;
+  await page.route(`**/data/rounds/${bad}.json`, (route) => (++calls === 1 ? route.fulfill({ status: 500, body: 'boom' }) : route.continue()));
+  await page.goto(`/#section=results&round=${bad}`);
+  await expect(page.getByRole('alert')).toContainText('HTTP 500');
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.locator('main h1')).toContainText(bad);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(calls).toBe(2);
+});
+
+test('Retry reloads the round index after it failed', async ({ page }) => {
+  let calls = 0;
+  await page.route('**/data/rounds.json', (route) => (++calls === 1 ? route.fulfill({ status: 500, body: 'boom' }) : route.continue()));
+  await page.goto('/#section=results');
+  await expect(page.getByRole('alert')).toContainText('HTTP 500');
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.locator('main h1')).toContainText('Results, round');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('a new attempt on a round that failed shows the loading state, not the old error, until it ends', async ({ page, request }) => {
+  const [bad] = await roundIds(request);
+  let calls = 0;
+  let release;
+  const gate = new Promise((r) => (release = r));
+  await page.route(`**/data/rounds/${bad}.json`, async (route) => {
+    if (++calls === 1) return route.fulfill({ status: 500, body: 'boom' });
+    await gate;
+    return route.continue();
+  });
+  await page.goto(`/#section=results&round=${bad}`);
+  await expect(page.getByRole('alert')).toContainText('HTTP 500');
+  // Retry, and a link to another section of the same round, both start a new attempt.
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByText(`Loading round ${bad}`)).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  release();
+  await expect(page.locator('main h1')).toContainText(bad);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('going back to a round that failed shows the loading state, not the old error, until the new attempt ends', async ({ page, request }) => {
+  const [bad, good] = await roundIds(request);
+  let calls = 0;
+  let release;
+  const gate = new Promise((r) => (release = r));
+  await page.route(`**/data/rounds/${bad}.json`, async (route) => {
+    if (++calls === 1) return route.fulfill({ status: 500, body: 'boom' });
+    await gate;
+    return route.continue();
+  });
+  // The good round is already loaded, so switching to it needs no new request.
+  await page.goto(`/#section=results&round=${good}`);
+  await expect(page.locator('main h1')).toContainText(good);
+  await page.evaluate((id) => { location.hash = `#section=results&round=${id}`; }, bad);
+  await expect(page.getByRole('alert')).toContainText('HTTP 500');
+  await page.getByLabel('Round').selectOption(good);
+  await expect(page.locator('main h1')).toContainText(good);
+  await page.evaluate((id) => { location.hash = `#section=results&round=${id}`; }, bad);
+  await expect(page.getByText(`Loading round ${bad}`)).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  release();
+  await expect(page.locator('main h1')).toContainText(bad);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});

@@ -12,8 +12,13 @@
   let round = $state(null);
   let ui = $state(null);
   let error = $state(null);
+  // The failure of one round. It only applies while that round is the selected one.
+  let roundError = $state(null);
+  let indexTry = $state(0);
+  let roundTry = $state(0);
 
   const entry = $derived(index && ui ? index.rounds.find((r) => r.id === ui.round) : null);
+  const failed = $derived(roundError && ui && roundError.id === ui.round ? roundError.message : null);
   const suites = $derived(entry?.suites ?? []);
 
   /** Applies a ui change and mirrors it in the hash; section changes add a history entry. */
@@ -30,23 +35,29 @@
   }
 
   $effect(() => {
-    loadIndex()
-      .then((i) => {
-        index = i;
-        ui = decode(location.hash, i, null);
-      })
-      .catch((e) => (error = e.message));
     const onhash = () => index && (ui = decode(location.hash, index, round));
     addEventListener('hashchange', onhash);
     return () => removeEventListener('hashchange', onhash);
   });
 
   $effect(() => {
+    indexTry; // a retry reruns the load
+    loadIndex()
+      .then((i) => {
+        error = null;
+        index = i;
+        ui = decode(location.hash, i, null);
+      })
+      .catch((e) => (error = e.message));
+  });
+
+  $effect(() => {
     const id = ui?.round;
     if (!id) return;
-    // A failure belongs to the round that was selected when it happened.
-    error = null;
+    roundTry; // a retry reruns the load
     if (round?.id === id) return;
+    // A new attempt starts: show that it is loading, not the failure of the previous attempt.
+    roundError = null;
     return followRound(
       id,
       loadRound,
@@ -54,7 +65,9 @@
         round = r;
         ui = decode(location.hash.includes('round=') ? location.hash : encode(ui, null), index, r);
       },
-      (e) => (error = e.message),
+      (e) => {
+        roundError = { id, message: e.message };
+      },
     );
   });
 
@@ -64,7 +77,10 @@
 </script>
 
 {#if error}
-  <main><p class="card" role="alert">Could not load the results: {error}</p></main>
+  <main>
+    <p class="card" role="alert">Could not load the results: {error}</p>
+    <p><button type="button" onclick={() => { error = null; indexTry++; }}>Retry</button></p>
+  </main>
 {:else if !index || !ui}
   <main><p class="muted">Loading results…</p></main>
 {:else}
@@ -72,6 +88,9 @@
   <main id="main">
     {#if ui.section === 'intro'}
       <Intro {entry} />
+    {:else if failed}
+      <p class="card" role="alert">Could not load round {ui.round}: {failed}</p>
+      <p><button type="button" onclick={() => roundTry++}>Retry</button></p>
     {:else if !round || round.id !== ui.round}
       <p class="muted">Loading round {ui.round}…</p>
     {:else if ui.section === 'environment'}
