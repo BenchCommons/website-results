@@ -118,6 +118,27 @@ test('Retry reloads the round index after it failed', async ({ page }) => {
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
+test('a new attempt on a round that failed shows the loading state, not the old error, until it ends', async ({ page, request }) => {
+  const [bad] = await roundIds(request);
+  let calls = 0;
+  let release;
+  const gate = new Promise((r) => (release = r));
+  await page.route(`**/data/rounds/${bad}.json`, async (route) => {
+    if (++calls === 1) return route.fulfill({ status: 500, body: 'boom' });
+    await gate;
+    return route.continue();
+  });
+  await page.goto(`/#section=results&round=${bad}`);
+  await expect(page.getByRole('alert')).toContainText('HTTP 500');
+  // Retry, and a link to another section of the same round, both start a new attempt.
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByText(`Loading round ${bad}`)).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  release();
+  await expect(page.locator('main h1')).toContainText(bad);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
 test('going back to a round that failed shows the loading state, not the old error, until the new attempt ends', async ({ page, request }) => {
   const [bad, good] = await roundIds(request);
   let calls = 0;
@@ -128,7 +149,10 @@ test('going back to a round that failed shows the loading state, not the old err
     await gate;
     return route.continue();
   });
-  await page.goto(`/#section=results&round=${bad}`);
+  // The good round is already loaded, so switching to it needs no new request.
+  await page.goto(`/#section=results&round=${good}`);
+  await expect(page.locator('main h1')).toContainText(good);
+  await page.evaluate((id) => { location.hash = `#section=results&round=${id}`; }, bad);
   await expect(page.getByRole('alert')).toContainText('HTTP 500');
   await page.getByLabel('Round').selectOption(good);
   await expect(page.locator('main h1')).toContainText(good);
