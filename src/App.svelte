@@ -16,7 +16,6 @@
   let roundError = $state(null);
   let indexTry = $state(0);
   let roundTry = $state(0);
-  let retrying = $state(false);
 
   const entry = $derived(index && ui ? index.rounds.find((r) => r.id === ui.round) : null);
   const failed = $derived(roundError && ui && roundError.id === ui.round ? roundError.message : null);
@@ -57,18 +56,17 @@
     if (!id) return;
     roundTry; // a retry reruns the load
     if (round?.id === id) return;
+    // A new attempt starts: show that it is loading, not the failure of the previous attempt.
+    roundError = null;
     return followRound(
       id,
       loadRound,
       (r) => {
-        roundError = null;
-        retrying = false;
         round = r;
         ui = decode(location.hash.includes('round=') ? location.hash : encode(ui, null), index, r);
       },
       (e) => {
         roundError = { id, message: e.message };
-        retrying = false;
       },
     );
   });
@@ -92,7 +90,7 @@
       <Intro {entry} />
     {:else if failed}
       <p class="card" role="alert">Could not load round {ui.round}: {failed}</p>
-      <p><button type="button" disabled={retrying} onclick={() => { retrying = true; roundTry++; }}>Retry</button></p>
+      <p><button type="button" onclick={() => roundTry++}>Retry</button></p>
     {:else if !round || round.id !== ui.round}
       <p class="muted">Loading round {ui.round}…</p>
     {:else if ui.section === 'environment'}

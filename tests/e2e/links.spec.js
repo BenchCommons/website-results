@@ -117,3 +117,25 @@ test('Retry reloads the round index after it failed', async ({ page }) => {
   await expect(page.locator('main h1')).toContainText('Results, round');
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
+
+test('going back to a round that failed shows the loading state, not the old error, until the new attempt ends', async ({ page, request }) => {
+  const [bad, good] = await roundIds(request);
+  let calls = 0;
+  let release;
+  const gate = new Promise((r) => (release = r));
+  await page.route(`**/data/rounds/${bad}.json`, async (route) => {
+    if (++calls === 1) return route.fulfill({ status: 500, body: 'boom' });
+    await gate;
+    return route.continue();
+  });
+  await page.goto(`/#section=results&round=${bad}`);
+  await expect(page.getByRole('alert')).toContainText('HTTP 500');
+  await page.getByLabel('Round').selectOption(good);
+  await expect(page.locator('main h1')).toContainText(good);
+  await page.evaluate((id) => { location.hash = `#section=results&round=${id}`; }, bad);
+  await expect(page.getByText(`Loading round ${bad}`)).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  release();
+  await expect(page.locator('main h1')).toContainText(bad);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
